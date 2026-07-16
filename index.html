@@ -638,7 +638,7 @@ function PreOrders({toast}){
           <Pill tone={PO_PILL[p.status]||'n'}>{_label(p.status)}</Pill>
           {p.reserved_qty&&<div className="sub">reserved {p.reserved_qty} @ {fmtRWF(p.unit_price)} · {p.fulfiller||'—'}</div>}</td>
         <td>{!p.converted_order_id
-          ? <button className="btn bp s" onClick={()=>setReady({id:p.id,name:p.product_name,unit_price:p.unit_price||'',reserved_qty:p.reserved_qty||p.requested_qty,fulfiller_id:p.fulfiller_id||''})}>Reserve &amp; ready</button>
+          ? <button className="btn p s" onClick={()=>setReady({id:p.id,name:p.product_name,unit_price:p.unit_price||'',reserved_qty:p.reserved_qty||p.requested_qty,fulfiller_id:p.fulfiller_id||''})}>Reserve &amp; ready</button>
           : <span className="sub">ordered #{p.converted_order_id}</span>}</td>
         <td className="sub">{fmtDate(p.created_at)}</td>
       </tr>)}</tbody></table>}</div>
@@ -654,7 +654,7 @@ function PreOrders({toast}){
         </select></F>
         <div style={{display:'flex',gap:'8px',marginTop:'14px'}}>
           <button className="btn g" onClick={()=>setReady(null)}>Cancel</button>
-          <button className="btn bp" style={{flex:'1'}} disabled={!ready.unit_price||!ready.reserved_qty||!ready.fulfiller_id}
+          <button className="btn p" style={{flex:'1'}} disabled={!ready.unit_price||!ready.reserved_qty||!ready.fulfiller_id}
             onClick={async()=>{ try{
               await api('PUT','/api/admin/preorders/'+ready.id+'/ready',{unit_price:Number(ready.unit_price),reserved_qty:Number(ready.reserved_qty),fulfiller_id:Number(ready.fulfiller_id)});
               toast('Reserved — customer can now buy it'); setReady(null); load();
