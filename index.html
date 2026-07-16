@@ -685,7 +685,7 @@ function Customers({toast}){
 }
 
 /* ─── DELIVERIES ─────────────────────────────────────────────────────── */
-const PROC_TABS=[['preparing','Preparing'],['ready','Ready'],['delivered','Delivered'],['received','Received']];
+const PROC_TABS=[['preparing','New orders'],['ready','Ready'],['delivered','In delivery'],['received','Received']];
 // New/confirmed orders read as "Preparing" to the shop; received/cancelled leave Processing.
 const PROC_DISPLAY=st=> (st==='confirmed'||st==='pending'||st==='preparing') ? 'preparing' : st;
 // user-facing stage names (internal status stays confirmed/ready/delivered/received)
