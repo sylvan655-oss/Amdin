@@ -165,6 +165,9 @@ const PO_PILL = {received:'a',under_review:'b',approved:'b',ordered:'b',ready:'g
 const CARE_PILL = {normal:'g',needs_followup:'a',frequent_issues:'r'};
 const TICKET_PILL = {open:'a',in_progress:'b',resolved:'g',closed:'n'};
 const label = s => (s||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+const LABEL_OVERRIDE = {approved:'Approval status'};
+const label0 = label;
+const _label = s => LABEL_OVERRIDE[s] || label0(s);
 
 /* ─── shared bits ────────────────────────────────────────────────────── */
 function Pill({tone,children}){ return <span className={'pill '+tone}>{children}</span>; }
@@ -588,7 +591,7 @@ function Orders({toast}){
           <td>{o.items_count}</td>
           <td><b>{fmtRWF(o.total)}</b></td>
           <td className="sub">{suppliers(o)}</td>
-          <td><Pill tone={ORDER_PILL[o.status]||'n'}>{label(o.status)}</Pill></td>
+          <td><Pill tone={ORDER_PILL[o.status]||'n'}>{_label(o.status)}</Pill></td>
           <td className="sub">{fmtDate(o.created_at)}</td>
           <td><button className="btn g s" onClick={()=>setOpen(open===o.id?null:o.id)}>{open===o.id?'Hide':'Items'}</button></td>
         </tr>
@@ -607,11 +610,13 @@ function Orders({toast}){
 const PO_STATUSES=['received','under_review','approved','ordered','ready','cancelled'];
 function PreOrders({toast}){
   const [rows,setRows]=useState([]); const [tab,setTab]=useState('all');
+  const [retailers,setRetailers]=useState([]); const [ready,setReady]=useState(null);
   const load=()=>{
     const p = tab==='all'?'':'?status='+tab;
     api('GET','/api/admin/preorders'+p).then(setRows).catch(e=>toast(e.message));
   };
   useEffect(load,[tab]);
+  useEffect(()=>{ api('GET','/api/admin/retailers').then(setRetailers).catch(()=>{}); },[]);
   const setStatus=async(po,st)=>{
     try{ await api('PUT','/api/admin/preorders/'+po.id+'/status',{status:st});
       toast('Pre-order updated (customer notified)'); load(); }catch(e){toast(e.message);}
@@ -620,19 +625,43 @@ function PreOrders({toast}){
     <div className="ph"><div><h1>Pre-orders</h1><p>Customer-approved requests for items that weren’t available. Statuses notify the customer.</p></div>
       <button className="btn g" onClick={()=>exportCSV('preorders',rows)}>Export CSV</button></div>
     <div className="bar"><div className="tabs">{['all'].concat(PO_STATUSES).map(t=>
-      <button key={t} className={tab===t?'on':''} onClick={()=>setTab(t)}>{label(t)}</button>)}</div></div>
+      <button key={t} className={tab===t?'on':''} onClick={()=>setTab(t)}>{_label(t)}</button>)}</div></div>
     <div className="twrap">{rows.length===0?<Empty title="No pre-orders" sub="They appear when customers ask for out-of-stock or missing products."/>:
-      <table><thead><tr><th>Customer</th><th>Product</th><th>Requested</th><th>Stock then</th><th>Status</th><th>Created</th></tr></thead>
+      <table><thead><tr><th>Customer</th><th>Product</th><th>Requested</th><th>Stock then</th><th>Status</th><th>Action</th><th>Created</th></tr></thead>
       <tbody>{rows.map(p=><tr key={p.id} className="row">
         <td>{p.customer||'—'}<div className="sub">{p.phone}</div></td>
         <td><b>{p.product_name}</b>{!p.product_id&&<div className="sub">not in catalogue — customer typed this</div>}</td>
         <td><b>{p.requested_qty}</b></td>
         <td className="sub">{p.stock_at_request==null?'—':p.stock_at_request}</td>
         <td><select className="inline" value={p.status} onChange={e=>setStatus(p,e.target.value)}>
-            {PO_STATUSES.map(s=><option key={s} value={s}>{label(s)}</option>)}</select>{' '}
-          <Pill tone={PO_PILL[p.status]||'n'}>{label(p.status)}</Pill></td>
+            {PO_STATUSES.map(s=><option key={s} value={s}>{_label(s)}</option>)}</select>{' '}
+          <Pill tone={PO_PILL[p.status]||'n'}>{_label(p.status)}</Pill>
+          {p.reserved_qty&&<div className="sub">reserved {p.reserved_qty} @ {fmtRWF(p.unit_price)} · {p.fulfiller||'—'}</div>}</td>
+        <td>{!p.converted_order_id
+          ? <button className="btn bp s" onClick={()=>setReady({id:p.id,name:p.product_name,unit_price:p.unit_price||'',reserved_qty:p.reserved_qty||p.requested_qty,fulfiller_id:p.fulfiller_id||''})}>Reserve &amp; ready</button>
+          : <span className="sub">ordered #{p.converted_order_id}</span>}</td>
         <td className="sub">{fmtDate(p.created_at)}</td>
       </tr>)}</tbody></table>}</div>
+    {ready && <div className="mbd" onClick={()=>setReady(null)}>
+      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:'420px'}}>
+        <h3 style={{margin:'0 0 4px'}}>Reserve for the customer</h3>
+        <div className="sub" style={{marginBottom:'14px'}}>{ready.name} — held privately for this customer; not added to public stock.</div>
+        <F label="Price per unit (RWF)"><input type="number" value={ready.unit_price} onChange={e=>setReady({...ready,unit_price:e.target.value})}/></F>
+        <F label="Quantity to reserve"><input type="number" value={ready.reserved_qty} onChange={e=>setReady({...ready,reserved_qty:e.target.value})}/></F>
+        <F label="Fulfilling shop"><select value={ready.fulfiller_id} onChange={e=>setReady({...ready,fulfiller_id:e.target.value})}>
+          <option value="">Choose a shop…</option>
+          {retailers.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+        </select></F>
+        <div style={{display:'flex',gap:'8px',marginTop:'14px'}}>
+          <button className="btn g" onClick={()=>setReady(null)}>Cancel</button>
+          <button className="btn bp" style={{flex:'1'}} disabled={!ready.unit_price||!ready.reserved_qty||!ready.fulfiller_id}
+            onClick={async()=>{ try{
+              await api('PUT','/api/admin/preorders/'+ready.id+'/ready',{unit_price:Number(ready.unit_price),reserved_qty:Number(ready.reserved_qty),fulfiller_id:Number(ready.fulfiller_id)});
+              toast('Reserved — customer can now buy it'); setReady(null); load();
+            }catch(e){toast(e.message);} }}>Reserve &amp; notify</button>
+        </div>
+      </div>
+    </div>}
   </React.Fragment>;
 }
 
@@ -666,11 +695,11 @@ function Customers({toast}){
         const parts=(u.name||'').trim().split(/\s+/);
         const first=parts[0]||'—', last=parts.slice(1).join(' ')||'—';
         return <tr key={u.id} className="row">
-        <td><b>{u.customer_code||('TB-'+String(u.id).padStart(6,'0'))}</b><div className="sub">{label(u.customer_type||'')||''}</div></td>
+        <td><b>{u.customer_code||('TB-'+String(u.id).padStart(6,'0'))}</b><div className="sub">{_label(u.customer_type||'')||''}</div></td>
         <td>{first}</td>
         <td>{last}</td>
         <td>{u.phone}</td>
-        <td>{u.gender?label(u.gender):'—'}</td>
+        <td>{u.gender?_label(u.gender):'—'}</td>
         <td>{ageOf(u.dob)}</td>
         <td>{u.language?u.language.toUpperCase():'—'}</td>
         <td>{u.district||'—'}</td>
@@ -689,7 +718,7 @@ const PROC_TABS=[['preparing','New orders'],['ready','Ready'],['delivered','In d
 // New/confirmed orders read as "Preparing" to the shop; received/cancelled leave Processing.
 const PROC_DISPLAY=st=> (st==='confirmed'||st==='pending'||st==='preparing') ? 'preparing' : st;
 // user-facing stage names (internal status stays confirmed/ready/delivered/received)
-const PROC_LABEL=st=> ({preparing:'New order',confirmed:'New order',ready:'Ready',delivered:'In delivery',received:'Received'}[st]||label(st));
+const PROC_LABEL=st=> ({preparing:'New order',confirmed:'New order',ready:'Ready',delivered:'In delivery',received:'Received'}[st]||_label(st));
 function Processing({toast, auth}){
   const [rows,setRows]=useState([]); const [tab,setTab]=useState('preparing');
   const [ful,setFul]=useState('all'); const [q,setQ]=useState('');
@@ -697,7 +726,7 @@ function Processing({toast, auth}){
   useEffect(load,[]);
   const advance=async(o,st)=>{
     try{ await api('PUT','/api/admin/orders/'+o.id+'/status',{status:st});
-      toast('Order '+o.ref+' → '+label(st)); load(); }
+      toast('Order '+o.ref+' → '+_label(st)); load(); }
     catch(e){toast(e.message);}
   };
   // one row per order (retailer already sees only theirs; items filtered server-side)
@@ -721,7 +750,7 @@ function Processing({toast, auth}){
   };
   return <React.Fragment>
     <div className="ph"><div><h1>Processing</h1><p>{auth&&auth.retailer_id?('Orders for '+(auth.retailer_name||'your shop')+' — prepare each one, then mark its progress.'):'Every order being worked — deliveries and self-pickups. Mark progress as items move.'}</p></div>
-      <button className="btn g" onClick={()=>exportCSV('processing',shown.map(o=>({order:o.ref,customer:o.customer,phone:o.phone,type:o.fulfillment,location:[o.village,o.district].filter(Boolean).join(', '),status:label(o.status)})))}>Export CSV</button></div>
+      <button className="btn g" onClick={()=>exportCSV('processing',shown.map(o=>({order:o.ref,customer:o.customer,phone:o.phone,type:o.fulfillment,location:[o.village,o.district].filter(Boolean).join(', '),status:_label(o.status)})))}>Export CSV</button></div>
     <div className="bar">
       <input type="text" placeholder="Search order, customer or phone…" value={q} onChange={e=>setQ(e.target.value)}/>
       <div className="tabs">{[['all','All'],['delivery','Delivery'],['pickup','Self-pickup']].map(([k,l])=>
@@ -779,7 +808,7 @@ function Notifications({toast}){
       <div className="note">A <b>banner</b> shows on the app’s Home screen (the newest sent banner wins). Other types go to customers’ notification inboxes.</div>
       <div className="fgrid">
         <F label="Type"><select value={f.type} onChange={e=>set('type',e.target.value)}>
-          {NOTIF_TYPES.map(t=><option key={t} value={t}>{label(t)}</option>)}</select></F>
+          {NOTIF_TYPES.map(t=><option key={t} value={t}>{_label(t)}</option>)}</select></F>
         <F label="Audience"><select value={f.audience} onChange={e=>set('audience',e.target.value)}>
           <option value="all">All customers</option><option value="individual">Specific customers</option></select></F>
         {f.audience!=='all'&&<div className="full"><F label="Customer IDs (comma-separated)">
@@ -804,7 +833,7 @@ function Notifications({toast}){
     <div className="twrap">{rows.length===0?<Empty title="Nothing sent yet" sub="Create a banner to greet customers on the Home screen."/>:
       <table><thead><tr><th>Type</th><th>Title</th><th>Audience</th><th>Sent</th><th></th></tr></thead>
       <tbody>{rows.map(n=><tr key={n.id} className="row">
-        <td><Pill tone={n.type==='banner'?'b':'n'}>{label(n.type)}</Pill></td>
+        <td><Pill tone={n.type==='banner'?'b':'n'}>{_label(n.type)}</Pill></td>
         <td><b>{n.title}</b></td>
         <td>{n.user_id?('Customer #'+n.user_id):'All customers'}</td>
         <td className="sub">{fmtDate(n.created_at)}</td>
@@ -830,7 +859,7 @@ function Support({toast}){
     <div className="ph"><div><h1>Customer support</h1><p>Every inquiry from the app lands here as a ticket.</p></div>
       <button className="btn g" onClick={()=>exportCSV('tickets',rows)}>Export CSV</button></div>
     <div className="bar"><div className="tabs">{['open','in_progress','resolved','closed','all'].map(t=>
-      <button key={t} className={tab===t?'on':''} onClick={()=>setTab(t)}>{label(t)}</button>)}</div></div>
+      <button key={t} className={tab===t?'on':''} onClick={()=>setTab(t)}>{_label(t)}</button>)}</div></div>
     <div className="twrap">{rows.length===0?<Empty title="No tickets" sub="You're all caught up."/>:
       <table><thead><tr><th>Ticket</th><th>Customer</th><th>Subject</th><th>Status</th><th>Received</th><th></th></tr></thead>
       <tbody>{rows.map(t=><React.Fragment key={t.id}>
@@ -839,8 +868,8 @@ function Support({toast}){
           <td>{t.customer||'—'}<div className="sub">{t.phone||t.email||''}</div></td>
           <td>{t.subject}</td>
           <td><select className="inline" value={t.status} onChange={e=>update(t,{status:e.target.value},'Status updated')}>
-              {TICKET_STATUSES.map(s=><option key={s} value={s}>{label(s)}</option>)}</select>{' '}
-            <Pill tone={TICKET_PILL[t.status]||'n'}>{label(t.status)}</Pill></td>
+              {TICKET_STATUSES.map(s=><option key={s} value={s}>{_label(s)}</option>)}</select>{' '}
+            <Pill tone={TICKET_PILL[t.status]||'n'}>{_label(t.status)}</Pill></td>
           <td className="sub">{fmtDate(t.created_at)}</td>
           <td style={{whiteSpace:'nowrap'}}>
             <button className="btn g s" onClick={()=>setOpen(open===t.id?null:t.id)}>{open===t.id?'Hide':'Read'}</button>{' '}
@@ -894,7 +923,7 @@ function Admins({toast}){
           : <div className="full"><F label="Permissions">
               <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
                 {PERMS.map(p=><label key={p} className="chk" style={{paddingTop:0}}>
-                  <input type="checkbox" checked={f.permissions.includes(p)} onChange={()=>togglePerm(p)}/>{label(p)}</label>)}
+                  <input type="checkbox" checked={f.permissions.includes(p)} onChange={()=>togglePerm(p)}/>{_label(p)}</label>)}
               </div></F></div>}
         <label className="chk"><input type="checkbox" checked={!!f.is_active} onChange={e=>set('is_active',e.target.checked)}/> Active</label>
       </div>
@@ -909,7 +938,7 @@ function Admins({toast}){
       <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Linked shop</th><th>Permissions</th><th>Status</th><th></th></tr></thead>
       <tbody>{rows.map(a=><tr key={a.id} className="row">
         <td><b>{a.username}</b></td><td>{a.email||'—'}</td>
-        <td><Pill tone={a.role==='superadmin'?'b':'n'}>{a.retailer_id?'Retailer':label(a.role)}</Pill></td>
+        <td><Pill tone={a.role==='superadmin'?'b':'n'}>{a.retailer_id?'Retailer':_label(a.role)}</Pill></td>
         <td className="sub">{a.retailer_id?((retailers.find(r=>r.id===a.retailer_id)||{}).name||('#'+a.retailer_id)):'—'}</td>
         <td className="sub">{a.retailer_id?'orders (own shop)':((a.permissions||[]).map(label).join(', ')||'—')}</td>
         <td>{a.is_active?<Pill tone="g">Active</Pill>:<Pill tone="r">Disabled</Pill>}</td>
@@ -997,7 +1026,7 @@ function App(){
           {counts[k]>0 && <span className="cnt">{counts[k]}</span>}
         </button>)}
       </nav>
-      <div className="foot"><b>{auth.username}</b>{label(auth.role)}
+      <div className="foot"><b>{auth.username}</b>{_label(auth.role)}
         <button onClick={()=>{localStorage.removeItem('tubura_admin');setAuth(null);}}>Sign out</button></div>
     </aside>
     <main className="main">
