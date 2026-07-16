@@ -544,58 +544,59 @@ function Stock({toast}){
 }
 
 /* ─── ORDERS ─────────────────────────────────────────────────────────── */
-const ORDER_STATUSES=['pending','confirmed','preparing','ready','delivered','cancelled'];
+const ORDER_STATUSES=['confirmed','ready','delivered','received','cancelled'];
+// Orders tab groups: New = everything still in progress, Done = received.
+const NEW_STATUSES=['pending','confirmed','preparing','ready','delivered'];
 function Orders({toast}){
-  const [rows,setRows]=useState([]); const [tab,setTab]=useState('pending');
-  const [q,setQ]=useState(''); const [open,setOpen]=useState(null);
-  const [retailers,setRetailers]=useState([]);
+  const [rows,setRows]=useState([]); const [tab,setTab]=useState('new');
+  const [ful,setFul]=useState('all'); const [q,setQ]=useState(''); const [open,setOpen]=useState(null);
   const load=()=>{
-    const p=new URLSearchParams(); if(tab!=='all')p.set('status',tab); if(q)p.set('search',q);
+    const p=new URLSearchParams(); if(q)p.set('search',q);
     api('GET','/api/admin/orders?'+p).then(setRows).catch(e=>toast(e.message));
   };
-  useEffect(load,[tab,q]);
-  useEffect(()=>{ api('GET','/api/admin/retailers').then(setRetailers).catch(()=>{}); },[]);
-  const setStatus=async(o,st)=>{
-    if(st==='cancelled' && !confirm('Cancel order '+o.ref+'? Stock will be restored.')) return;
-    try{ await api('PUT','/api/admin/orders/'+o.id+'/status',{status:st});
-      toast('Order '+o.ref+' → '+label(st)+' (customer notified)'); load(); }
-    catch(e){toast(e.message);}
+  useEffect(load,[q]);
+  const inTab=o=>{
+    if(tab==='all') return true;
+    if(tab==='cancelled') return o.status==='cancelled';
+    if(tab==='done') return o.status==='received';
+    return NEW_STATUSES.includes(o.status);       // 'new'
   };
-  const reassign=async(item,rid)=>{
-    try{ await api('PUT','/api/admin/order-items/'+item.id+'/retailer',{retailer_id:Number(rid)});
-      toast('Supplier changed'); load(); }catch(e){toast(e.message);}
-  };
+  const shown=rows.filter(o=> inTab(o) && (ful==='all' || (o.fulfillment||'delivery')===ful));
+  const fulLabel=f=> f==='pickup'?'Self-pickup':'Delivery';
+  const suppliers=o=> [...new Set((o.items||[]).map(i=>i.retailer).filter(Boolean))].join(', ')||'—';
+  const locationOf=o=> o.fulfillment==='pickup'
+      ? ([o.village,o.cell,o.sector,o.district].filter(Boolean).join(', ')||'—')
+      : ([o.district,o.sector].filter(Boolean).join(' › ')||'—');
   return <React.Fragment>
-    <div className="ph"><div><h1>Orders</h1><p>Update the status as you fulfil — the customer is notified in-app and by SMS at every step.</p></div>
-      <button className="btn g" onClick={()=>exportCSV('orders',rows)}>Export CSV</button></div>
+    <div className="ph"><div><h1>Orders</h1><p>Every order in one place. New covers everything in progress; Done means the customer has received it.</p></div>
+      <button className="btn g" onClick={()=>exportCSV('orders',shown)}>Export CSV</button></div>
     <div className="bar">
-      <div className="tabs">{['pending','confirmed','preparing','ready','delivered','cancelled','all'].map(t=>
-        <button key={t} className={tab===t?'on':''} onClick={()=>setTab(t)}>{label(t)}</button>)}</div>
+      <div className="tabs">{[['new','New'],['done','Done'],['cancelled','Cancelled'],['all','All']].map(([k,l])=>
+        <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div>
+      <div className="tabs">{[['all','All'],['delivery','Delivery'],['pickup','Self-pickup']].map(([k,l])=>
+        <button key={k} className={'tab'+(ful===k?' on':'')} onClick={()=>setFul(k)}>{l}</button>)}</div>
       <input type="text" placeholder="Search ref, name or phone…" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
-    <div className="twrap">{rows.length===0?<Empty title="No orders here" sub="Orders appear the moment a customer checks out."/>:
-      <table><thead><tr><th>Ref</th><th>Customer</th><th>Deliver to</th><th>Items</th><th>Total</th><th>Status</th><th>Placed</th><th></th></tr></thead>
-      <tbody>{rows.map(o=><React.Fragment key={o.id}>
+    <div className="twrap">{shown.length===0?<Empty title="No orders here" sub="Orders appear the moment a customer checks out."/>:
+      <table><thead><tr><th>Ref</th><th>Customer</th><th>Delivery status</th><th>Location</th><th>Items</th><th>Total</th><th>Fulfilled by</th><th>Status</th><th>Placed</th><th></th></tr></thead>
+      <tbody>{shown.map(o=><React.Fragment key={o.id}>
         <tr className="row">
           <td><b>#{o.ref}</b></td>
           <td>{o.customer||'—'}<div className="sub">{o.phone}</div></td>
-          <td>{[o.district,o.sector].filter(Boolean).join(' › ')}<div className="sub">{o.landmark||''}</div></td>
+          <td><Pill tone={o.fulfillment==='pickup'?'b':'n'}>{fulLabel(o.fulfillment)}</Pill></td>
+          <td>{locationOf(o)}<div className="sub">{o.fulfillment==='pickup'?'':(o.landmark||'')}</div></td>
           <td>{o.items_count}</td>
           <td><b>{fmtRWF(o.total)}</b></td>
-          <td><select className="inline" value={o.status} onChange={e=>setStatus(o,e.target.value)}>
-              {ORDER_STATUSES.map(s=><option key={s} value={s}>{label(s)}</option>)}</select>{' '}
-            <Pill tone={ORDER_PILL[o.status]||'n'}>{label(o.status)}</Pill></td>
+          <td className="sub">{suppliers(o)}</td>
+          <td><Pill tone={ORDER_PILL[o.status]||'n'}>{label(o.status)}</Pill></td>
           <td className="sub">{fmtDate(o.created_at)}</td>
           <td><button className="btn g s" onClick={()=>setOpen(open===o.id?null:o.id)}>{open===o.id?'Hide':'Items'}</button></td>
         </tr>
-        {open===o.id && <tr className="expand"><td colSpan="8">
+        {open===o.id && <tr className="expand"><td colSpan="10">
           {o.items.map(i=><div key={i.id} className="itemline">
             <b style={{minWidth:'220px'}}>{i.qty} × {i.name}</b>
             <span className="sub">{fmtRWF(i.price)} each</span>
-            <span style={{marginLeft:'auto'}} className="sub">Supplier:</span>
-            <select className="inline" value={i.retailer_id||''} onChange={e=>reassign(i,e.target.value)}>
-              {retailers.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
+            <span style={{marginLeft:'auto'}} className="sub">Fulfilled by: <b>{i.retailer||'—'}</b>{i.retailer_phone?' · '+i.retailer_phone:''}</span>
           </div>)}
         </td></tr>}
       </React.Fragment>)}</tbody></table>}</div>
@@ -641,78 +642,27 @@ const ageOf = d => { if(!d) return '—'; const b=new Date(d), n=new Date();
   let a=n.getFullYear()-b.getFullYear(); const m=n.getMonth()-b.getMonth();
   if(m<0||(m===0&&n.getDate()<b.getDate())) a--; return isNaN(a)?'—':a; };
 
-/* ─── DELIVERIES ─────────────────────────────────────────────────────── */
-const DELIV_TABS=[['active','To deliver'],['pending','Pending'],['confirmed','Confirmed'],['preparing','Preparing'],['ready','Ready'],['delivered','Delivered']];
-const ACTIVE_STATUSES=['pending','confirmed','preparing','ready'];
-function Deliveries({toast}){
-  const [rows,setRows]=useState([]); const [tab,setTab]=useState('active'); const [q,setQ]=useState('');
-  const load=()=>{ api('GET','/api/admin/orders').then(setRows).catch(e=>toast(e.message)); };
-  useEffect(load,[]);
-  const advance=async(o,st)=>{
-    try{ await api('PUT','/api/admin/orders/'+o.id+'/status',{status:st}); toast('Order '+o.ref+' → '+label(st)); load(); }
-    catch(e){toast(e.message);}
-  };
-  const flat=[];
-  rows.forEach(o=>o.items.forEach(it=>flat.push({o,it})));
-  const shown=flat.filter(({o,it})=>{
-    if(tab==='active'){ if(!ACTIVE_STATUSES.includes(o.status)) return false; }
-    else if(o.status!==tab) return false;
-    if(!q) return true;
-    const l=q.toLowerCase();
-    return (o.ref||'').toLowerCase().includes(l) || (o.customer||'').toLowerCase().includes(l) ||
-           (o.phone||'').includes(q) || (it.name||'').toLowerCase().includes(l);
-  });
-  const STATUS_PILL={pending:'y',confirmed:'b',preparing:'b',ready:'g',delivered:'g',cancelled:'r'};
-  return <React.Fragment>
-    <div className="ph"><div><h1>Deliveries</h1><p>Every item that still needs to reach a customer, with where it goes and who supplies it. Changing a status updates the whole order.</p></div>
-      <button className="btn g" onClick={()=>exportCSV('deliveries',shown.map(({o,it})=>({order:o.ref,item:it.name,qty:it.qty,customer:o.customer,phone:o.phone,village:o.village,district:o.district,retailer:it.retailer,status:o.status})))}>Export CSV</button></div>
-    <div className="bar">
-      <input type="text" placeholder="Search order, item, customer or phone…" value={q} onChange={e=>setQ(e.target.value)}/>
-      <div className="tabs">{DELIV_TABS.map(([k,l])=>
-        <button key={k} className={'tab'+(tab===k?' on':'')} onClick={()=>setTab(k)}>{l}</button>)}</div>
-    </div>
-    <div className="twrap">{shown.length===0?<Empty title="Nothing here" sub="Items appear as customers place orders."/>:
-      <table><thead><tr><th>Order</th><th>Item</th><th>Qty</th><th>Customer</th><th>Deliver to</th><th>Supplied by</th><th>Status</th></tr></thead>
-      <tbody>{shown.map(({o,it})=><tr key={o.id+'-'+it.id} className="row">
-        <td><b>#{o.ref}</b><div className="sub">{fmtDate(o.created_at)}</div></td>
-        <td><b>{it.name}</b></td>
-        <td>{it.qty}</td>
-        <td>{o.customer||'—'}<div className="sub">{o.phone||''}</div></td>
-        <td>{o.fulfillment==='pickup'?<Pill tone="b">Pickup</Pill>:([o.village,o.district].filter(Boolean).join(', ')||'—')}{o.fulfillment!=='pickup'&&o.landmark&&<div className="sub">{o.landmark}</div>}</td>
-        <td>{it.retailer||'—'}</td>
-        <td><Pill tone={STATUS_PILL[o.status]||'n'}>{label(o.status)}</Pill>{' '}
-          {o.status!=='delivered'&&o.status!=='cancelled'&&
-            <select className="inline" value={o.status} onChange={e=>advance(o,e.target.value)}>
-              {['pending','confirmed','preparing','ready','delivered'].map(st=><option key={st} value={st}>{label(st)}</option>)}
-            </select>}
-        </td>
-      </tr>)}</tbody></table>}</div>
-  </React.Fragment>;
-}
-
-
 function Customers({toast}){
-  const [rows,setRows]=useState([]); const [q,setQ]=useState(''); const [care,setCare]=useState('');
-  const load=()=>{
-    const p=new URLSearchParams(); if(q)p.set('search',q); if(care)p.set('care_status',care);
-    api('GET','/api/admin/customers?'+p).then(setRows).catch(e=>toast(e.message));
-  };
-  useEffect(load,[q,care]);
+  const [rows,setRows]=useState([]); const [q,setQ]=useState('');
+  const load=()=>{ api('GET','/api/admin/customers').then(setRows).catch(e=>toast(e.message)); };
+  useEffect(load,[]);
   const update=async(u,patch,msg)=>{
-    try{ await api('PUT','/api/admin/customers/'+u.id,patch); toast(msg); load(); }
+    try{ await api('PUT','/api/admin/customers/'+u.id,patch); toast(msg||'Customer updated'); load(); }
     catch(e){toast(e.message);}
   };
+  const shown=rows.filter(u=> !q ||
+    (u.name||'').toLowerCase().includes(q.toLowerCase()) ||
+    (u.phone||'').includes(q) ||
+    (u.customer_code||'').toLowerCase().includes(q.toLowerCase()));
   return <React.Fragment>
-    <div className="ph"><div><h1>Customers</h1><p>Care status flags who may need attention — it never blocks anyone from ordering.</p></div>
-      <button className="btn g" onClick={()=>exportCSV('customers',rows)}>Export CSV</button></div>
+    <div className="ph"><div><h1>Customers</h1><p>Everyone who has signed up in the app.</p></div>
+      <button className="btn g" onClick={()=>exportCSV('customers',shown)}>Export CSV</button></div>
     <div className="bar">
-      <input type="text" placeholder="Search name, phone or email…" value={q} onChange={e=>setQ(e.target.value)}/>
-      <select value={care} onChange={e=>setCare(e.target.value)}><option value="">Any care status</option>
-        {CARE_STATUSES.map(s=><option key={s} value={s}>{label(s)}</option>)}</select>
+      <input type="text" placeholder="Search name, phone or ID…" value={q} onChange={e=>setQ(e.target.value)}/>
     </div>
-    <div className="twrap">{rows.length===0?<Empty title="No customers yet" sub="Accounts appear here after signup in the app."/>:
+    <div className="twrap">{shown.length===0?<Empty title="No customers yet" sub="Accounts appear here after signup in the app."/>:
       <table><thead><tr><th>Customer ID</th><th>First name</th><th>Last name</th><th>Phone number</th><th>Gender</th><th>Age</th><th>Language</th><th>District</th><th>Account</th><th>Joined</th></tr></thead>
-      <tbody>{rows.map(u=>{
+      <tbody>{shown.map(u=>{
         const parts=(u.name||'').trim().split(/\s+/);
         const first=parts[0]||'—', last=parts.slice(1).join(' ')||'—';
         return <tr key={u.id} className="row">
@@ -731,6 +681,69 @@ function Customers({toast}){
             {u.is_active?'Disable':'Enable'}</button></td>
         <td className="sub">{fmtDate(u.date_joined)}</td>
       </tr>;})}</tbody></table>}</div>
+  </React.Fragment>;
+}
+
+/* ─── DELIVERIES ─────────────────────────────────────────────────────── */
+const PROC_TABS=[['preparing','Preparing'],['ready','Ready'],['delivered','Delivered'],['received','Received']];
+// New/confirmed orders read as "Preparing" to the shop; received/cancelled leave Processing.
+const PROC_DISPLAY=st=> (st==='confirmed'||st==='pending'||st==='preparing') ? 'preparing' : st;
+function Processing({toast, auth}){
+  const [rows,setRows]=useState([]); const [tab,setTab]=useState('preparing');
+  const [ful,setFul]=useState('all'); const [q,setQ]=useState('');
+  const load=()=>{ api('GET','/api/admin/orders').then(setRows).catch(e=>toast(e.message)); };
+  useEffect(load,[]);
+  const advance=async(o,st)=>{
+    try{ await api('PUT','/api/admin/orders/'+o.id+'/status',{status:st});
+      toast('Order '+o.ref+' → '+label(st)); load(); }
+    catch(e){toast(e.message);}
+  };
+  // one row per order (retailer already sees only theirs; items filtered server-side)
+  const active = rows.filter(o=> o.status!=='cancelled');
+  const shown = active.filter(o=>{
+    if(ful!=='all' && (o.fulfillment||'delivery')!==ful) return false;
+    if(tab==='delivered' && o.fulfillment==='pickup') return false;  // Delivered = delivery only
+    return PROC_DISPLAY(o.status)===tab;
+  }).filter(o=> !q || (o.ref||'').toLowerCase().includes(q.toLowerCase()) ||
+      (o.customer||'').toLowerCase().includes(q.toLowerCase()) || (o.phone||'').includes(q));
+  const PILL={preparing:'b',ready:'g',delivered:'g',received:'g'};
+  const actionsFor=o=>{
+    const disp=PROC_DISPLAY(o.status); const isPickup=o.fulfillment==='pickup';
+    const btns=[];
+    if(disp==='preparing') btns.push(['ready','Mark Ready','bp']);
+    else if(disp==='ready'){
+      if(isPickup) btns.push(['received','Mark Received','bp']);
+      else btns.push(['delivered','Mark Delivered','bp']);
+    } else if(disp==='delivered') btns.push(['received','Mark Received','bp']);
+    return btns;
+  };
+  return <React.Fragment>
+    <div className="ph"><div><h1>Processing</h1><p>{auth&&auth.retailer_id?('Orders for '+(auth.retailer_name||'your shop')+' — prepare each one, then mark its progress.'):'Every order being worked — deliveries and self-pickups. Mark progress as items move.'}</p></div>
+      <button className="btn g" onClick={()=>exportCSV('processing',shown.map(o=>({order:o.ref,customer:o.customer,phone:o.phone,type:o.fulfillment,location:[o.village,o.district].filter(Boolean).join(', '),status:label(o.status)})))}>Export CSV</button></div>
+    <div className="bar">
+      <input type="text" placeholder="Search order, customer or phone…" value={q} onChange={e=>setQ(e.target.value)}/>
+      <div className="tabs">{[['all','All'],['delivery','Delivery'],['pickup','Self-pickup']].map(([k,l])=>
+        <button key={k} className={'tab'+(ful===k?' on':'')} onClick={()=>setFul(k)}>{l}</button>)}</div>
+      <div className="tabs">{PROC_TABS.map(([k,l])=>
+        <button key={k} className={'tab'+(tab===k?' on':'')} onClick={()=>setTab(k)}>{l}</button>)}</div>
+    </div>
+    <div className="twrap">{shown.length===0?<Empty title="Nothing to process" sub="New orders show up here automatically."/>:
+      <table><thead><tr><th>Order</th><th>Customer</th><th>Type</th><th>Location</th><th>Items</th><th>Stage</th><th>Action</th></tr></thead>
+      <tbody>{shown.map(o=><tr key={o.id} className="row">
+        <td><b>#{o.ref}</b><div className="sub">{fmtDate(o.created_at)}</div></td>
+        <td>{o.customer||'—'}<div className="sub">{o.phone||''}</div></td>
+        <td><Pill tone={o.fulfillment==='pickup'?'b':'n'}>{o.fulfillment==='pickup'?'Self-pickup':'Delivery'}</Pill></td>
+        <td>{o.fulfillment==='pickup'?([o.village,o.cell,o.sector,o.district].filter(Boolean).join(', ')||'—'):([o.village,o.district].filter(Boolean).join(', ')||'—')}{o.fulfillment!=='pickup'&&o.landmark&&<div className="sub">{o.landmark}</div>}</td>
+        <td>{(o.items||[]).map(i=><div key={i.id} className="sub">{i.qty} × {i.name}</div>)}</td>
+        <td><Pill tone={PILL[PROC_DISPLAY(o.status)]||'n'}>{label(PROC_DISPLAY(o.status))}</Pill></td>
+        <td>{actionsFor(o).map(([st,lbl,cls])=>
+          <button key={st} className={'btn '+cls+' s'} style={{marginRight:'6px'}} onClick={()=>advance(o,st)}>{lbl}</button>)}
+          {auth && !auth.retailer_id &&
+            <select className="inline" value={PROC_DISPLAY(o.status)} onChange={e=>advance(o,e.target.value)}>
+              {['confirmed','ready','delivered','received'].map(st=><option key={st} value={st}>{label(st)}</option>)}
+            </select>}
+        </td>
+      </tr>)}</tbody></table>}</div>
   </React.Fragment>;
 }
 
@@ -838,12 +851,13 @@ function Support({toast}){
 
 /* ─── ADMINS (superadmin only) ───────────────────────────────────────── */
 function Admins({toast}){
-  const [rows,setRows]=useState([]); const [edit,setEdit]=useState(null);
+  const [rows,setRows]=useState([]); const [edit,setEdit]=useState(null); const [retailers,setRetailers]=useState([]);
   const load=()=>{ api('GET','/api/admin/admins').then(setRows).catch(e=>toast(e.message)); };
   useEffect(load,[]);
+  useEffect(()=>{ api('GET','/api/admin/retailers').then(setRetailers).catch(()=>{}); },[]);
   const PERMS=['products','categories','retailers','stock','orders','preorders','customers','notifications','support','admins'];
   const Form=()=>{
-    const [f,setF]=useState(Object.assign({username:'',password:'',email:'',role:'admin',permissions:[],is_active:true},edit.id?Object.assign({},edit,{password:''}):{}));
+    const [f,setF]=useState(Object.assign({username:'',password:'',email:'',role:'admin',permissions:[],is_active:true,retailer_id:null},edit.id?Object.assign({},edit,{password:''}):{}));
     const [err,setErr]=useState(null);
     const set=(k,v)=>setF(s=>Object.assign({},s,{[k]:v}));
     const togglePerm=p=>set('permissions', f.permissions.includes(p)?f.permissions.filter(x=>x!==p):f.permissions.concat(p));
@@ -852,7 +866,7 @@ function Admins({toast}){
       if(!edit.id && (!f.password||f.password.length<8)) return setErr('Password must be at least 8 characters');
       try{
         const body={username:f.username,email:f.email||null,role:f.role,permissions:f.permissions,
-          is_active:f.is_active,password:f.password||null};
+          is_active:f.is_active,password:f.password||null,retailer_id:f.retailer_id?Number(f.retailer_id):null};
         if(edit.id) await api('PUT','/api/admin/admins/'+edit.id,body);
         else await api('POST','/api/admin/admins',body);
         toast('Administrator saved'); setEdit(null); load();
@@ -865,14 +879,21 @@ function Admins({toast}){
         <F label="Email"><input value={f.email||''} onChange={e=>set('email',e.target.value)}/></F>
         <F label={edit.id?'New password (leave blank to keep)':'Password'}>
           <input type="password" value={f.password} onChange={e=>set('password',e.target.value)}/></F>
-        <F label="Role"><select value={f.role} onChange={e=>set('role',e.target.value)}>
+        <F label="Linked retailer (optional)">
+          <select value={f.retailer_id||''} onChange={e=>set('retailer_id',e.target.value||null)}>
+            <option value="">None — this is an HQ account</option>
+            {retailers.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
+          </select></F>
+        {!f.retailer_id && <F label="Role"><select value={f.role} onChange={e=>set('role',e.target.value)}>
           <option value="admin">Admin</option><option value="staff">Staff</option>
-          <option value="superadmin">Superadmin</option></select></F>
-        <div className="full"><F label="Permissions">
-          <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
-            {PERMS.map(p=><label key={p} className="chk" style={{paddingTop:0}}>
-              <input type="checkbox" checked={f.permissions.includes(p)} onChange={()=>togglePerm(p)}/>{label(p)}</label>)}
-          </div></F></div>
+          <option value="superadmin">Superadmin</option></select></F>}
+        {f.retailer_id
+          ? <div className="full"><div className="sub" style={{padding:'6px 0'}}>Retailer account: can sign in to see and update the status of <b>its own shop's orders only</b> — every other page is blocked.</div></div>
+          : <div className="full"><F label="Permissions">
+              <div style={{display:'flex',flexWrap:'wrap',gap:'8px'}}>
+                {PERMS.map(p=><label key={p} className="chk" style={{paddingTop:0}}>
+                  <input type="checkbox" checked={f.permissions.includes(p)} onChange={()=>togglePerm(p)}/>{label(p)}</label>)}
+              </div></F></div>}
         <label className="chk"><input type="checkbox" checked={!!f.is_active} onChange={e=>set('is_active',e.target.checked)}/> Active</label>
       </div>
       <div className="mrow"><button className="btn g" onClick={()=>setEdit(null)}>Cancel</button>
@@ -883,11 +904,12 @@ function Admins({toast}){
     <div className="ph"><div><h1>Administrators</h1><p>Only superadmins can see this page.</p></div>
       <button className="btn p" onClick={()=>setEdit({})}>+ Add administrator</button></div>
     <div className="twrap"><table>
-      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Permissions</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>Username</th><th>Email</th><th>Role</th><th>Linked shop</th><th>Permissions</th><th>Status</th><th></th></tr></thead>
       <tbody>{rows.map(a=><tr key={a.id} className="row">
         <td><b>{a.username}</b></td><td>{a.email||'—'}</td>
-        <td><Pill tone={a.role==='superadmin'?'b':'n'}>{label(a.role)}</Pill></td>
-        <td className="sub">{(a.permissions||[]).map(label).join(', ')||'—'}</td>
+        <td><Pill tone={a.role==='superadmin'?'b':'n'}>{a.retailer_id?'Retailer':label(a.role)}</Pill></td>
+        <td className="sub">{a.retailer_id?((retailers.find(r=>r.id===a.retailer_id)||{}).name||('#'+a.retailer_id)):'—'}</td>
+        <td className="sub">{a.retailer_id?'orders (own shop)':((a.permissions||[]).map(label).join(', ')||'—')}</td>
         <td>{a.is_active?<Pill tone="g">Active</Pill>:<Pill tone="r">Disabled</Pill>}</td>
         <td><button className="btn g s" onClick={()=>setEdit(a)}>Edit</button></td>
       </tr>)}</tbody></table></div>
@@ -933,7 +955,7 @@ const PAGES = [
   ['retailers','Retailers','retailers'],
   ['stock','Stock','stock'],
   ['orders','Orders','orders'],
-  ['deliveries','Deliveries','deliveries'],
+  ['deliveries','Processing','deliveries'],
   ['preorders','Pre-orders','preorders'],
   ['customers','Customers','customers'],
   ['notifications','Notifications','notifications'],
@@ -954,16 +976,21 @@ function App(){
     tick(); const id=setInterval(tick,60000); return ()=>clearInterval(id);
   },[auth,page]);
   if(!auth) return <React.Fragment><Login onIn={setAuth}/>{toastEl}</React.Fragment>;
-  const visible = PAGES.filter(([k])=> k==='dashboard' || auth.role==='superadmin' || (k!=='admins' && (auth.permissions||[]).includes(PAGE_PERM[k]||k)));
+  const isRetailer = !!auth.retailer_id;
+  const visible = isRetailer
+    ? PAGES.filter(([k])=> k==='orders' || k==='deliveries')
+    : PAGES.filter(([k])=> k==='dashboard' || auth.role==='superadmin' || (k!=='admins' && (auth.permissions||[]).includes(PAGE_PERM[k]||k)));
+  // retailer accounts are confined to orders + processing (no hook — avoids conditional-hook crash)
+  const curPage = (isRetailer && page!=='orders' && page!=='deliveries') ? 'deliveries' : page;
   const Body = {dashboard:Dashboard,products:Products,categories:Categories,retailers:Retailers,
-    stock:Stock,orders:Orders,deliveries:Deliveries,preorders:PreOrders,customers:Customers,
-    notifications:Notifications,support:Support,admins:Admins}[page] || Dashboard;
+    stock:Stock,orders:Orders,deliveries:Processing,preorders:PreOrders,customers:Customers,
+    notifications:Notifications,support:Support,admins:Admins}[curPage] || Dashboard;
   return <div className="shell">
     <aside className="side">
       <div className="brand"><div className="leaf-mark"><OAFLogo width={24} height={19}/></div>
-        <div><b>Tubura</b><span>Admin</span></div></div>
+        <div><b>Tubura</b><span>{auth.retailer_id?(auth.retailer_name||'Retailer'):'Admin'}</span></div></div>
       <nav className="nav">{visible.map(([k,l,ic])=>
-        <button key={k} className={page===k?'on':''} onClick={()=>setPage(k)}>
+        <button key={k} className={curPage===k?'on':''} onClick={()=>setPage(k)}>
           <SIcon n={ic}/><em style={{fontStyle:'normal'}}>{l}</em>
           {counts[k]>0 && <span className="cnt">{counts[k]}</span>}
         </button>)}
@@ -972,7 +999,7 @@ function App(){
         <button onClick={()=>{localStorage.removeItem('tubura_admin');setAuth(null);}}>Sign out</button></div>
     </aside>
     <main className="main">
-      <Body go={setPage} toast={toast}/>
+      <Body go={setPage} toast={toast} auth={auth}/>
     </main>
     {toastEl}
   </div>;
