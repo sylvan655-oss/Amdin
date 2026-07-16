@@ -688,6 +688,8 @@ function Customers({toast}){
 const PROC_TABS=[['preparing','Preparing'],['ready','Ready'],['delivered','Delivered'],['received','Received']];
 // New/confirmed orders read as "Preparing" to the shop; received/cancelled leave Processing.
 const PROC_DISPLAY=st=> (st==='confirmed'||st==='pending'||st==='preparing') ? 'preparing' : st;
+// user-facing stage names (internal status stays confirmed/ready/delivered/received)
+const PROC_LABEL=st=> ({preparing:'New order',confirmed:'New order',ready:'Ready',delivered:'In delivery',received:'Received'}[st]||label(st));
 function Processing({toast, auth}){
   const [rows,setRows]=useState([]); const [tab,setTab]=useState('preparing');
   const [ful,setFul]=useState('all'); const [q,setQ]=useState('');
@@ -713,7 +715,7 @@ function Processing({toast, auth}){
     if(disp==='preparing') btns.push(['ready','Mark Ready','bp']);
     else if(disp==='ready'){
       if(isPickup) btns.push(['received','Mark Received','bp']);
-      else btns.push(['delivered','Mark Delivered','bp']);
+      else btns.push(['delivered','Mark In delivery','bp']);
     } else if(disp==='delivered') btns.push(['received','Mark Received','bp']);
     return btns;
   };
@@ -735,12 +737,12 @@ function Processing({toast, auth}){
         <td><Pill tone={o.fulfillment==='pickup'?'b':'n'}>{o.fulfillment==='pickup'?'Self-pickup':'Delivery'}</Pill></td>
         <td>{o.fulfillment==='pickup'?([o.village,o.cell,o.sector,o.district].filter(Boolean).join(', ')||'—'):([o.village,o.district].filter(Boolean).join(', ')||'—')}{o.fulfillment!=='pickup'&&o.landmark&&<div className="sub">{o.landmark}</div>}</td>
         <td>{(o.items||[]).map(i=><div key={i.id} className="sub">{i.qty} × {i.name}</div>)}</td>
-        <td><Pill tone={PILL[PROC_DISPLAY(o.status)]||'n'}>{label(PROC_DISPLAY(o.status))}</Pill></td>
+        <td><Pill tone={PILL[PROC_DISPLAY(o.status)]||'n'}>{PROC_LABEL(PROC_DISPLAY(o.status))}</Pill></td>
         <td>{actionsFor(o).map(([st,lbl,cls])=>
           <button key={st} className={'btn '+cls+' s'} style={{marginRight:'6px'}} onClick={()=>advance(o,st)}>{lbl}</button>)}
           {auth && !auth.retailer_id &&
             <select className="inline" value={PROC_DISPLAY(o.status)} onChange={e=>advance(o,e.target.value)}>
-              {['confirmed','ready','delivered','received'].map(st=><option key={st} value={st}>{label(st)}</option>)}
+              {['confirmed','ready','delivered','received'].map(st=><option key={st} value={st}>{PROC_LABEL(st)}</option>)}
             </select>}
         </td>
       </tr>)}</tbody></table>}</div>
