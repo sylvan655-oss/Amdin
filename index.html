@@ -161,7 +161,7 @@ const exportCSV = (name, rows) => {
 };
 const STOCK_PILL = {in_stock:['g','In Stock'], limited:['a','Limited'], out_of_stock:['r','Out of Stock']};
 const ORDER_PILL = {pending:'a',confirmed:'b',preparing:'b',ready:'g',delivered:'g',cancelled:'r'};
-const PO_PILL = {received:'a',under_review:'b',approved:'b',ordered:'b',ready:'g',cancelled:'r'};
+const PO_PILL = {under_review:'a',approved:'g',denied:'r',cancelled:'r',ordered:'b'};
 const CARE_PILL = {normal:'g',needs_followup:'a',frequent_issues:'r'};
 const TICKET_PILL = {open:'a',in_progress:'b',resolved:'g',closed:'n'};
 const label = s => (s||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
@@ -609,56 +609,73 @@ function Orders({toast}){
 /* ─── PRE-ORDERS ─────────────────────────────────────────────────────── */
 const PO_STATUSES=['received','under_review','approved','ordered','ready','cancelled'];
 function PreOrders({toast}){
-  const [rows,setRows]=useState([]); const [tab,setTab]=useState('all');
+  const [rows,setRows]=useState([]); const [tab,setTab]=useState('under_review');
   const [retailers,setRetailers]=useState([]); const [ready,setReady]=useState(null);
-  const load=()=>{
-    const p = tab==='all'?'':'?status='+tab;
-    api('GET','/api/admin/preorders'+p).then(setRows).catch(e=>toast(e.message));
-  };
-  useEffect(load,[tab]);
+  const load=()=>{ api('GET','/api/admin/preorders').then(setRows).catch(e=>toast(e.message)); };
+  useEffect(load,[]);
   useEffect(()=>{ api('GET','/api/admin/retailers').then(setRetailers).catch(()=>{}); },[]);
   const setStatus=async(po,st)=>{
     try{ await api('PUT','/api/admin/preorders/'+po.id+'/status',{status:st});
-      toast('Pre-order updated (customer notified)'); load(); }catch(e){toast(e.message);}
+      toast(st==='approved'?'Approved':st==='denied'?'Denied — customer notified':'Updated'); load(); }catch(e){toast(e.message);}
   };
+  const TABS=[['under_review','Under review'],['approved','Approved'],['denied','Denied'],['cancelled','Cancelled'],['history','History']];
+  const daysAgo=iso=>{ if(!iso) return 999; return (Date.now()-new Date(iso).getTime())/86400000; };
+  // Approved/Denied/Cancelled tabs show only the last 30 days; History shows everything.
+  const shown=rows.filter(p=>{
+    if(tab==='history') return true;
+    if(tab==='under_review') return p.status==='under_review';
+    if(p.status!==tab) return false;
+    return daysAgo(p.updated_at||p.created_at) <= 30;
+  });
+  const loc=p=>[p.req_district,p.req_sector].filter(Boolean).join(', ')||'—';
   return <React.Fragment>
-    <div className="ph"><div><h1>Pre-orders</h1><p>Customer-approved requests for items that weren’t available. Statuses notify the customer.</p></div>
-      <button className="btn g" onClick={()=>exportCSV('preorders',rows)}>Export CSV</button></div>
-    <div className="bar"><div className="tabs">{['all'].concat(PO_STATUSES).map(t=>
-      <button key={t} className={tab===t?'on':''} onClick={()=>setTab(t)}>{_label(t)}</button>)}</div></div>
-    <div className="twrap">{rows.length===0?<Empty title="No pre-orders" sub="They appear when customers ask for out-of-stock or missing products."/>:
-      <table><thead><tr><th>Customer</th><th>Product</th><th>Requested</th><th>Stock then</th><th>Status</th><th>Action</th><th>Created</th></tr></thead>
-      <tbody>{rows.map(p=><tr key={p.id} className="row">
+    <div className="ph"><div><h1>Pre-orders</h1><p>Requests waiting on review. Approve to reserve and let the customer buy, or deny. Approved/Denied/Cancelled move to History after 30 days.</p></div>
+      <button className="btn g" onClick={()=>exportCSV('preorders',shown)}>Export CSV</button></div>
+    <div className="bar"><div className="tabs">{TABS.map(([k,l])=>
+      <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}</div></div>
+    <div className="twrap">{shown.length===0?<Empty title="Nothing here" sub="Pre-orders appear under review when customers submit them."/>:
+      <table><thead><tr><th>Customer</th><th>Product</th><th>Qty</th><th>Needed by</th><th>Reason</th><th>Location</th><th>Status</th><th>Action</th><th>Created</th></tr></thead>
+      <tbody>{shown.map(p=><tr key={p.id} className="row">
         <td>{p.customer||'—'}<div className="sub">{p.phone}</div></td>
-        <td><b>{p.product_name}</b>{!p.product_id&&<div className="sub">not in catalogue — customer typed this</div>}</td>
+        <td><b>{p.product_name}</b>{!p.product_id&&<div className="sub">not in catalogue</div>}</td>
         <td><b>{p.requested_qty}</b></td>
-        <td className="sub">{p.stock_at_request==null?'—':p.stock_at_request}</td>
-        <td><select className="inline" value={p.status} onChange={e=>setStatus(p,e.target.value)}>
-            {PO_STATUSES.map(s=><option key={s} value={s}>{_label(s)}</option>)}</select>{' '}
-          <Pill tone={PO_PILL[p.status]||'n'}>{_label(p.status)}</Pill>
-          {p.reserved_qty&&<div className="sub">reserved {p.reserved_qty} @ {fmtRWF(p.unit_price)} · {p.fulfiller||'—'}</div>}</td>
-        <td>{!p.converted_order_id
-          ? <button className="btn p s" onClick={()=>setReady({id:p.id,name:p.product_name,unit_price:p.unit_price||'',reserved_qty:p.reserved_qty||p.requested_qty,fulfiller_id:p.fulfiller_id||''})}>Reserve &amp; ready</button>
-          : <span className="sub">ordered #{p.converted_order_id}</span>}</td>
+        <td className="sub">{p.needed_by||'—'}</td>
+        <td className="sub" style={{maxWidth:'160px'}}>{p.reason||'—'}</td>
+        <td className="sub">{loc(p)}</td>
+        <td><Pill tone={PO_PILL[p.status]||'n'}>{_label(p.status)}</Pill>
+          {p.reserved_qty&&<div className="sub">reserved {p.reserved_qty} @ {fmtRWF(p.unit_price)} · {p.fulfiller||'—'}</div>}
+          {p.available_on&&<div className="sub">ready ~{p.available_on}</div>}</td>
+        <td>
+          {p.status==='under_review' && <div style={{display:'flex',gap:'6px'}}>
+            <button className="btn p s" onClick={()=>setReady({id:p.id,name:p.product_name,unit_price:p.unit_price||'',reserved_qty:p.reserved_qty||p.requested_qty,fulfiller_id:p.fulfiller_id||'',available_on:'',admin_note:''})}>Approve &amp; reserve</button>
+            <button className="btn d s" onClick={()=>{ if(confirm('Deny this pre-order?')) setStatus(p,'denied'); }}>Deny</button>
+          </div>}
+          {p.status==='approved' && (p.converted_order_id
+            ? <span className="sub">ordered #{p.converted_order_id}</span>
+            : <button className="btn g s" onClick={()=>setReady({id:p.id,name:p.product_name,unit_price:p.unit_price||'',reserved_qty:p.reserved_qty||p.requested_qty,fulfiller_id:p.fulfiller_id||'',available_on:p.available_on||'',admin_note:p.admin_note||''})}>Edit reservation</button>)}
+          {p.status==='ordered' && <span className="sub">ordered #{p.converted_order_id}</span>}
+        </td>
         <td className="sub">{fmtDate(p.created_at)}</td>
       </tr>)}</tbody></table>}</div>
     {ready && <div className="mbd" onClick={()=>setReady(null)}>
-      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:'420px'}}>
-        <h3 style={{margin:'0 0 4px'}}>Reserve for the customer</h3>
-        <div className="sub" style={{marginBottom:'14px'}}>{ready.name} — held privately for this customer; not added to public stock.</div>
+      <div className="modal" onClick={e=>e.stopPropagation()} style={{maxWidth:'440px'}}>
+        <h3 style={{margin:'0 0 4px'}}>Approve &amp; reserve</h3>
+        <div className="sub" style={{marginBottom:'14px'}}>{ready.name} — held privately for this customer; not public stock. The customer decides to buy or cancel.</div>
         <F label="Price per unit (RWF)"><input type="number" value={ready.unit_price} onChange={e=>setReady({...ready,unit_price:e.target.value})}/></F>
         <F label="Quantity to reserve"><input type="number" value={ready.reserved_qty} onChange={e=>setReady({...ready,reserved_qty:e.target.value})}/></F>
         <F label="Fulfilling shop"><select value={ready.fulfiller_id} onChange={e=>setReady({...ready,fulfiller_id:e.target.value})}>
           <option value="">Choose a shop…</option>
           {retailers.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}
         </select></F>
+        <F label="Realistic ready date (optional)"><input type="date" value={ready.available_on} onChange={e=>setReady({...ready,available_on:e.target.value})}/></F>
+        <F label="Note to customer (optional)"><textarea rows="2" value={ready.admin_note} onChange={e=>setReady({...ready,admin_note:e.target.value})} placeholder="e.g. Seedlings ready early April"/></F>
         <div style={{display:'flex',gap:'8px',marginTop:'14px'}}>
           <button className="btn g" onClick={()=>setReady(null)}>Cancel</button>
           <button className="btn p" style={{flex:'1'}} disabled={!ready.unit_price||!ready.reserved_qty||!ready.fulfiller_id}
             onClick={async()=>{ try{
-              await api('PUT','/api/admin/preorders/'+ready.id+'/ready',{unit_price:Number(ready.unit_price),reserved_qty:Number(ready.reserved_qty),fulfiller_id:Number(ready.fulfiller_id)});
-              toast('Reserved — customer can now buy it'); setReady(null); load();
-            }catch(e){toast(e.message);} }}>Reserve &amp; notify</button>
+              await api('PUT','/api/admin/preorders/'+ready.id+'/ready',{unit_price:Number(ready.unit_price),reserved_qty:Number(ready.reserved_qty),fulfiller_id:Number(ready.fulfiller_id),available_on:ready.available_on||null,admin_note:ready.admin_note||null});
+              toast('Approved & reserved — customer notified'); setReady(null); load();
+            }catch(e){toast(e.message);} }}>Approve &amp; notify</button>
         </div>
       </div>
     </div>}
